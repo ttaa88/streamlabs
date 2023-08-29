@@ -10,9 +10,9 @@ use Carbon\Carbon;
 use DateInterval;
 use DatePeriod;
 use DateTime;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
-use Predis\Client;
+use SplObjectStorage;
+use SplPriorityQueue;
 
 class EventCacheController
 {
@@ -21,17 +21,6 @@ class EventCacheController
     private $donationTag = 'donation';
     private $merchSaleTag = 'merchSale';
 
-    private $merchTag = 'merchSale';
-
-    private $redisClient;
-
-    public function __construct()
-    {
-        $this->redisClient = new Client([
-            'host'   => 'redis',
-            'port'   => 6379,
-        ]);
-    }
 
     public function addFollower($date, Follower $follower)
     {
@@ -56,22 +45,13 @@ class EventCacheController
 
     public function addMerchSale($date, MerchSale $merchSale)
     {
-        // A sorted set of merch, score represents total sales.
-        $result = Redis::zScore($this->getCacheKey($this->merchSaleTag, $date), $merchSale->itemName) ?: 0;
-        $result += ($merchSale->amount * $merchSale->price);
-        if ($result != 0) {
-            Redis::zRem($this->getCacheKey($this->merchSaleTag, $date), $merchSale->itemName);
+        $result = Redis::hGet($this->getCacheKey($this->merchSaleTag, $date), $merchSale->itemName);
+        if ($result == null) {
+            $result = 0;
         }
-        Redis::zAdd($this->getCacheKey($this->merchSaleTag, $date), $result, $merchSale->itemName);
 
-        $result = Redis::get($this->getCacheKey($this->merchTag, $date)) ?: 0;
         $result += ($merchSale->amount * $merchSale->price);
-        Redis::set($this->getCacheKey($this->merchTag, $date), $result);
-    }
-
-    public function getValues($key)
-    {
-        return Redis::get($key) ?: [];
+        Redis::hSet($this->getCacheKey($this->merchSaleTag, $date), $merchSale->itemName, $result);
     }
 
     public function getTotalFollowers($days)
@@ -92,7 +72,7 @@ class EventCacheController
         // Iterate through the time differences
         foreach ($datePeriod as $date) {
             $key = $this->getCacheKey($this->followerTag, $date->format('Y_m_d'));
-            $result = (int)$this->redisClient->get($key) ?: 0;
+            $result = Redis::get($key) ?: 0;
             $totalCount += $result;
         }
         return $totalCount;
@@ -105,29 +85,27 @@ class EventCacheController
         $startDate->sub(new DateInterval($days));
 
         $endDate = $currentDate;
-
-        // Define the step interval (1 day)
         $interval = new DateInterval('P1D');
-
-        // Create a DatePeriod object to iterate through the time differences
         $datePeriod = new DatePeriod($startDate, $interval, $endDate);
 
         $totalRevenue = 0;
-        // Iterate through the time differences
         foreach ($datePeriod as $date) {
             $key = $this->getCacheKey($this->donationTag, $date->format('Y_m_d'));
-            $result = (int)$this->redisClient->get($key) ?: 0;
+            $result = Redis::get($key) ?: 0;
             $totalRevenue += $result;
 
             $key = $this->getCacheKey($this->subscriberTag, $date->format('Y_m_d'));
-            $result = (int)$this->redisClient->get($key) ?: 0;
+            $result = Redis::get($key) ?: 0;
             $totalRevenue += $result;
 
             $key = $this->getCacheKey($this->merchSaleTag, $date->format('Y_m_d'));
-            $result = (int)$this->redisClient->get($key) ?: 0;
+            $sales = Redis::hGetAll($key) ?: [];
+            foreach ($sales as $sale) {
+                $totalRevenue += $sale;
+            }
             $totalRevenue += $result;
         }
-        return $totalRevenue;
+        return (int)$totalRevenue;
     }
 
     public function getTopMerchSales($topN, $days)
@@ -137,20 +115,37 @@ class EventCacheController
         $startDate->sub(new DateInterval($days));
 
         $endDate = $currentDate;
-
-        // Define the step interval (1 day)
         $interval = new DateInterval('P1D');
-
-        // Create a DatePeriod object to iterate through the time differences
         $datePeriod = new DatePeriod($startDate, $interval, $endDate);
 
-        $totalRevenue = 0;
-        // Iterate through the time differences
+
+        $map = array();
         foreach ($datePeriod as $date) {
             $key = $this->getCacheKey($this->merchSaleTag, $date->format('Y_m_d'));
-            $result = (int)$this->redisClient->zRange($key, -1, -3) ?: 0;
+            $sales = Redis::hGetAll($key) ?: [];
+            foreach ($sales as $name => $value) {
+                if (array_key_exists($name, $map)) {
+                    $map[$name] = $map[$name] + $value;
+                } else {
+                    $map[$name] = $value;
+                }
+            }
         }
-        return $totalRevenue;
+
+        // Use priority queue to sort merch sales.
+        $pq = new SplPriorityQueue();
+        foreach ($map as $name => $value) {
+            $pq->insert($name, $value);
+        }
+
+        $top = 0;
+        $topSales = array();
+        while($top < $topN) {
+            $topSales[] = $pq->current();
+            $pq->next();
+            $top++;
+        }
+        return $topSales;
     }
 
     private function getCacheKey($tag, $date)

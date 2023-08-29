@@ -1,4 +1,5 @@
 # Streamlabs
+![img](/resources/img/Dashboard.png)
 ## Prerequisite
 Assume that Laravel has been configurated correctly on your environment.
 
@@ -22,10 +23,12 @@ php artisan migrate:refresh && php artisan db:seed
 php artisan make:command PopulateEventCache
 ```
 
-## How to use
-1. If you haven't registered an account, please click on **Register** button on the top right corner.
-2. Once your account has been created, just log in.
-3. You should see a message list on dashboard page.
+## How to run
+1. Make sure **redis-server** is running.
+2. Run `php artisan serve` in one terminal and run `npm run dev` in another terminal.
+3. If you haven't registered an account, please click on **Register** button on the top right corner.
+4. Once your account has been created, just log in.
+5. You should see a message list on dashboard page.
 
 ## Explain the design
 ### DisplayMessage

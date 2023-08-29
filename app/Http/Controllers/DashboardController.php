@@ -29,7 +29,7 @@ class DashboardController extends Controller
             'displayMessages' => $this->getDisplayMessages($request),
             'totalFollowers' => $this->eventCacheController->getTotalFollowers('P30D'),
             'totalRevenue' => $this->eventCacheController->getTotalRevenue('P30D'),
-            'topSales' => $this->eventCacheController->getTopMerchSales(3, 'P30D'),
+            'topMerchSales' => $this->eventCacheController->getTopMerchSales(3, 'P30D'),
         ]);
     }
 
